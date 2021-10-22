@@ -1,0 +1,44 @@
+{
+    "name": "devolon/payment-highway",
+    "description": "PaymentHighway package implements PaymentHighway as a gateway of `devolon/payment` package",
+    "keywords": ["laravel", "payment", "payment-highway"],
+    "require": {
+        "php": "^8.0",
+        "laravel/framework": "^8.12",
+        "devolon/payment": "*",
+        "ramsey/uuid": "4.1.1 as 3.0",
+        "solinor/paymenthighwayio": "3.0.0"
+    },
+    "require-dev": {
+        "mockery/mockery": "^1.4.2",
+        "orchestra/testbench-core": "^6.23",
+        "phpunit/phpunit": "^9.3.3"
+    },
+    "autoload": {
+        "psr-4": {
+            "Devolon\\PaymentHighway\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Devolon\\PaymentHighway\\Tests\\": "tests/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Devolon technical team",
+            "homepage": "https://www.devolon.fi"
+        }
+    ],
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Devolon\\PaymentHighway\\DevolonPaymentHighwayServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "preferred-install": "dist"
+    },
+    "minimum-stability": "dev"
+}
