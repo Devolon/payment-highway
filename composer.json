@@ -5,7 +5,7 @@
     "require": {
         "php": "^8.0",
         "laravel/framework": "^8.12",
-        "devolon/payment": "^v1.0",
+        "devolon/payment": "^v1.2",
         "ramsey/uuid": "4.1.1 as 3.0",
         "solinor/paymenthighwayio": "3.0.0"
     },
