@@ -16,9 +16,9 @@ abstract class PaymentHighwayTestCase extends TestCase
 
     protected function setUp(): void
     {
-        parent::setUp();
         putenv('IS_PAYMENT_HIGHWAY_AVAILABLE=true');
         putenv('IS_EDENRED_AVAILABLE=true');
+        parent::setUp();
         $this->artisan('migrate:fresh');
 
         Schema::create('users', function (Blueprint $table) {

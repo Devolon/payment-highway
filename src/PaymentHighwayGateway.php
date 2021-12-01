@@ -2,16 +2,17 @@
 
 namespace Devolon\PaymentHighway;
 
+use Devolon\Payment\Contracts\CanRefund;
 use Devolon\Payment\Contracts\HasUpdateTransactionData;
 use Devolon\Payment\Contracts\PaymentGatewayInterface;
 use Devolon\Payment\DTOs\PurchaseResultDTO;
 use Devolon\Payment\DTOs\RedirectDTO;
 use Devolon\Payment\Models\Transaction;
 use Devolon\Payment\Services\SetGatewayResultService;
-use Solinor\PaymentHighway\FormBuilder;
+use Httpful\Exception\ConnectionErrorException;
 use Solinor\PaymentHighway\PaymentApi;
 
-class PaymentHighwayGateway implements PaymentGatewayInterface, HasUpdateTransactionData
+class PaymentHighwayGateway implements PaymentGatewayInterface, HasUpdateTransactionData, CanRefund
 {
     public const NAME = 'payment-highway';
 
@@ -20,6 +21,11 @@ class PaymentHighwayGateway implements PaymentGatewayInterface, HasUpdateTransac
         private PaymentApi $paymentApi,
         private SetGatewayResultService $setGatewayResultService
     ) {
+    }
+
+    public function getName(): string
+    {
+        return self::NAME;
     }
 
     public function purchase(Transaction $transaction): PurchaseResultDTO
@@ -50,7 +56,7 @@ class PaymentHighwayGateway implements PaymentGatewayInterface, HasUpdateTransac
             'EUR'
         );
 
-        if ($response->code !== 200) {
+        if (200 !== $response->code || 100 !== $response->body->result->code) {
             return false;
         }
 
@@ -58,14 +64,40 @@ class PaymentHighwayGateway implements PaymentGatewayInterface, HasUpdateTransac
             return false;
         }
 
-        ($this->setGatewayResultService)($transaction, 'commit', $response->body);
+        $gatewayResult = clone $response->body;
+        $gatewayResult->gateway_transaction_id = $data['sph-transaction-id'];
+
+        ($this->setGatewayResultService)(
+            $transaction,
+            'commit',
+            $gatewayResult
+        );
 
         return true;
     }
 
-    public function getName(): string
+    public function refund(Transaction $transaction): bool
     {
-        return self::NAME;
+        try {
+            $response = $this->paymentApi->revertTransaction(
+                $transaction->gateway_results['commit']['gateway_transaction_id'],
+                round($transaction->money_amount * 100)
+            );
+        } catch (ConnectionErrorException) {
+            return false;
+        }
+
+        if (200 !== $response->code || 100 !== $response->body->result->code) {
+            return false;
+        }
+
+        ($this->setGatewayResultService)(
+            $transaction,
+            'refund',
+            $response->body
+        );
+
+        return true;
     }
 
     public function updateTransactionDataRules(string $newStatus): array

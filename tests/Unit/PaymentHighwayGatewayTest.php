@@ -2,6 +2,7 @@
 
 namespace Devolon\PaymentHighway\Tests\Unit;
 
+use Devolon\Payment\Contracts\CanRefund;
 use Devolon\Payment\Contracts\HasUpdateTransactionData;
 use Devolon\Payment\Contracts\PaymentGatewayInterface;
 use Devolon\Payment\DTOs\PurchaseResultDTO;
@@ -12,6 +13,7 @@ use Devolon\Payment\Services\SetGatewayResultService;
 use Devolon\PaymentHighway\FormBuilderFactory;
 use Devolon\PaymentHighway\PaymentHighwayGateway;
 use Devolon\PaymentHighway\Tests\PaymentHighwayTestCase;
+use Hamcrest\Core\IsEqual;
 use Httpful\Response;
 use Illuminate\Foundation\Testing\WithFaker;
 use Mockery;
@@ -112,11 +114,12 @@ class PaymentHighwayGatewayTest extends PaymentHighwayTestCase
         $transaction = Transaction::factory()->create();
         $sphTransactionId = $this->faker->uuid;
         $commitResponse = $this->mockResponse();
-
-        // Expect
         $commitResponse->body = $this->successfulVerifyResponse();
         $commitResponse->code = 200;
+        $expectedGatewayResult = clone $commitResponse->body;
+        $expectedGatewayResult->gateway_transaction_id = $sphTransactionId;
 
+        // Expect
         $formBuilder
             ->shouldReceive('commitFormTransaction')
             ->with($sphTransactionId, round($transaction->money_amount * 100), 'EUR')
@@ -125,7 +128,7 @@ class PaymentHighwayGatewayTest extends PaymentHighwayTestCase
 
         $setGatewayResultService
             ->shouldReceive('__invoke')
-            ->with($transaction, 'commit', $commitResponse->body)
+            ->with($transaction, 'commit', IsEqual::equalTo($expectedGatewayResult))
             ->once();
 
         // Act
@@ -165,6 +168,82 @@ class PaymentHighwayGatewayTest extends PaymentHighwayTestCase
         $this->assertFalse($result);
     }
 
+    public function testRefundSuccessfully()
+    {
+        // Arrange
+        $formBuilder = $this->mockPaymentApi();
+        $setGatewayResultService = $this->mockSetGatewayResultService();
+        /** @var CanRefund $gateway */
+        $gateway = $this->discoverGateway();
+        $sphTransactionId = $this->faker->uuid;
+        $transaction = Transaction::factory()->done()->create([
+            'gateway_results' => [
+                'commit' => [
+                    'gateway_transaction_id' => $sphTransactionId,
+                ],
+            ],
+        ]);
+        $refundResponse = $this->mockResponse();
+
+        // Expect
+        $refundResponse->body = $this->successfulRefundResponse();
+        $refundResponse->code = 200;
+
+        $formBuilder
+            ->shouldReceive('revertTransaction')
+            ->with($sphTransactionId, round($transaction->money_amount * 100))
+            ->once()
+            ->andReturn($refundResponse);
+
+        $setGatewayResultService
+            ->shouldReceive('__invoke')
+            ->with($transaction, 'refund', IsEqual::equalTo($refundResponse->body))
+            ->once();
+
+        // Act
+        $result = $gateway->refund($transaction);
+
+        // Assert
+        $this->assertTrue($result);
+        $transaction->refresh();
+    }
+
+    /**
+     * @dataProvider failedRefundData
+     */
+    public function testRefundFailed(int $code, stdClass $body)
+    {
+        // Arrange
+        $formBuilder = $this->mockPaymentApi();
+        /** @var CanRefund $gateway */
+        $gateway = $this->discoverGateway();
+        $sphTransactionId = $this->faker->uuid;
+        $transaction = Transaction::factory()->done()->create([
+            'gateway_results' => [
+                'commit' => [
+                    'gateway_transaction_id' => $sphTransactionId,
+                ],
+            ],
+        ]);
+        $commitResponse = $this->mockResponse();
+
+        // Expect
+        $commitResponse->body = $body;
+        $commitResponse->code = $code;
+
+        $formBuilder
+            ->shouldReceive('revertTransaction')
+            ->with($sphTransactionId, round($transaction->money_amount * 100))
+            ->once()
+            ->andReturn($commitResponse);
+
+        // Act
+        $result = $gateway->refund($transaction);
+
+        // Assert
+        $this->assertFalse($result);
+    }
+
     public function testUpdateTransactionDataRulesWithDoneStatus()
     {
         // Arrange
@@ -198,21 +277,63 @@ class PaymentHighwayGatewayTest extends PaymentHighwayTestCase
 
     public function failedCommitData(): array
     {
-        $notCommittedResponseBody = new stdClass();
-        $notCommittedResponseBody->committed = false;
+        $faker = $this->makeFaker('en_US');
 
         return [
             'Not OK response code' => [
                 400,
                 $this->successfulVerifyResponse(),
             ],
-            'OK response but committed key is not present' => [
+            'OK response code and non 100 result code' => [
                 200,
-                new stdClass(),
+                (function() use ($faker) {
+                    $body = $this->successfulVerifyResponse();
+                    $body->result->code = $faker->numberBetween(101, 5000);
+
+                    return $body;
+                })(),
+            ],
+            'OK response and 100 result code but committed key is not present' => [
+                200,
+                (function() use ($faker) {
+                    $body = new stdClass();
+                    $body->result = new stdClass();
+                    $body->result->code = 100;
+
+                    return $body;
+                })(),
             ],
             'OK response but committed key is false' => [
                 200,
-                $notCommittedResponseBody,
+                (function() use ($faker) {
+                    $body = new stdClass();
+                    $body->committed = false;
+                    $body->result = new stdClass();
+                    $body->result->code = 100;
+
+                    return $body;
+                })(),
+            ],
+        ];
+    }
+
+    public function failedRefundData(): array
+    {
+        $faker = $this->makeFaker('en_US');
+
+        return [
+            'Not OK response code' => [
+                400,
+                $this->successfulRefundResponse(),
+            ],
+            'OK response code and non 100 result code' => [
+                200,
+                (function() use ($faker) {
+                    $body = $this->successfulVerifyResponse();
+                    $body->result->code = $faker->numberBetween(101, 5000);
+
+                    return $body;
+                })(),
             ],
         ];
     }
@@ -277,6 +398,20 @@ class PaymentHighwayGatewayTest extends PaymentHighwayTestCase
     "card_fingerprint": "da6b0df36efd17c0e7f6967b9e440a0c61b6bd3d96b62f14c90155a1fb883597",
     "pan_fingerprint": "e858e18daac509247f463292641237d6a74ce44e0971ba2de4a14874928a8805"
   },
+  "result": {
+    "code": 100,
+    "message": "OK"
+  }
+}
+JSON;
+
+        return json_decode($json);
+    }
+
+    private function successfulRefundResponse(): stdClass
+    {
+        $json = <<<JSON
+{
   "result": {
     "code": 100,
     "message": "OK"
